@@ -1,0 +1,10 @@
+{
+  "id": "com.ryankscott.finish-em",
+  "name": "Finish Em",
+  "fileName": "finish-em",
+  "author" : "Ryan Scott",
+  "author-email" : "ryankennethscott@gmail.com",
+  "description" : "Send to Finish Em",
+  "api": "0.0.4",
+  "main": "index.html"
+}
