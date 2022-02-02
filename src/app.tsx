@@ -9,7 +9,6 @@ import {
   Flex,
   Text,
   useToast,
-  Switch,
   useColorMode,
 } from "@chakra-ui/react";
 import { CheckCircleIcon, RepeatIcon } from "@chakra-ui/icons";
@@ -30,11 +29,9 @@ const App: React.FC<{}> = () => {
   const { colorMode, toggleColorMode } = useColorMode();
   const toast = useToast();
   const [todos, setTodos] = React.useState<Todo[]>([]);
-  const [debug, setDebug] = React.useState<boolean>(false);
   const [fetchingTodos, setFetchingTodos] = React.useState<boolean>(false);
   const [sendingTodos, setSendingTodos] = React.useState<boolean>(false);
   const [hasSubmitted, setHasSubmitted] = React.useState<boolean>(false);
-  const [debugInfo, setDebugInfo] = React.useState<string>();
 
   if (
     (isDarkMode && colorMode == "light") ||
@@ -43,60 +40,65 @@ const App: React.FC<{}> = () => {
     toggleColorMode();
   }
 
-  const log = (input: string | object) => {
-    if (!debug) return;
-    setDebugInfo(debugInfo + "\n" + JSON.stringify(input));
-    return;
-  };
-
-  const updateTodosInCraft = async (todos: Todo[]) => {
-    log(todos);
+  const updateTodosInCraft = async (todos: Todo[]): Promise<boolean> => {
     const blockIdsToEdit = todos.filter((t) => t.checked).map((t) => t.id);
-    log(blockIdsToEdit);
     const selectionResult = await craft.editorApi.selectBlocks(blockIdsToEdit);
-    log(selectionResult);
 
     if (selectionResult.status !== "success") {
-      throw new Error(selectionResult.message);
+      setSendingTodos(false);
+      console.log(
+        `Failed to select blocks to update - ${selectionResult.message}`
+      );
+      return false;
     }
     if (!selectionResult.data) {
-      return;
+      return false;
     }
 
     const selectedBlocks = selectionResult.data;
-    log(selectedBlocks);
     selectedBlocks.forEach(async (block) => {
       if (block.type != "textBlock" || block.listStyle.type != "todo") {
-        log("failed to find a todo block");
-        throw new Error("Tried to alter a non-todo");
+        console.log("Failed to find a todo block");
+        setSendingTodos(false);
+        return false;
       }
 
-      block.content.map((t) => (t.text = "cat"));
-      //      block.listStyle.state = "checked";
+      block.listStyle.state = "checked";
       const result = await craft.dataApi.updateBlocks([block]);
-      log(result);
 
       if (result.status !== "success") {
-        throw new Error(result.message);
+        setSendingTodos(false);
+        console.log(`Failed to update blocks - ${result.message}`);
+        return false;
       }
 
       if (!result.data) {
-        throw new Error("Failed to update anything");
+        setSendingTodos(false);
+        console.log("Failed to update anything");
+        return false;
       }
+
+      setSendingTodos(false);
+      return true;
     });
+    return true;
   };
 
-  const sendTodosToFinishEm = async (todos: Todo[]) => {
+  const sendTodosToFinishEm = async (todos: Todo[]): Promise<boolean> => {
     setSendingTodos(true);
-    await Promise.all(
-      todos.map(async (t) => {
-        const result = await fetch("http://localhost:8089/graphql", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            query: `
+    try {
+      await Promise.all(
+        todos.map(async (t) => {
+          const result = await craft.httpProxy.fetch({
+            url: "http://localhost:8089/graphql",
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: {
+              type: "text",
+              text: JSON.stringify({
+                query: `
   mutation CreateItem(
     $key: String!
     $type: String!
@@ -118,22 +120,29 @@ const App: React.FC<{}> = () => {
     }
   }
       `,
-            variables: {
-              key: uuid(),
-              type: "TODO",
-              text: t.text,
+                variables: {
+                  key: uuid(),
+                  type: "TODO",
+                  text: t.text,
+                },
+              }),
             },
-          }),
-        });
-        if (!result.ok) {
-          setSendingTodos(false);
-          throw new Error(
-            `Failed to send todos to Finish Em - ${result.statusText}`
-          );
-        }
-        return result;
-      })
-    );
+          });
+          if (result.status != "success") {
+            setSendingTodos(false);
+            console.log(
+              `Failed to send todos to Finish Em - ${result.message}`
+            );
+            return false;
+          }
+          return result;
+        })
+      );
+    } catch (err) {
+      `Failed to send todos to Finish Em - ${err}`;
+      setSendingTodos(false);
+      return false;
+    }
     toast({
       position: "bottom-right",
       title: `${todos.length} todos sent`,
@@ -142,6 +151,7 @@ const App: React.FC<{}> = () => {
       isClosable: true,
     });
     setSendingTodos(false);
+    return true;
   };
 
   const getTodosInText = async () => {
@@ -266,34 +276,21 @@ const App: React.FC<{}> = () => {
             fontSize="md"
             size="sm"
             onClick={async () => {
+              const success = await sendTodosToFinishEm(todos);
+              if (!success) {
+                console.log("Failed to send todos to finish-em");
+                setHasSubmitted(true);
+                return;
+              }
               await updateTodosInCraft(todos);
-              await sendTodosToFinishEm(todos);
               setHasSubmitted(true);
+              getTodosInText();
             }}
           >
             {hasSubmitted ? "Done" : "Submit"}
           </Button>
         </Flex>
       </Flex>
-      <Flex my={4} alignItems="center">
-        <Text fontSize="9px" pr={2}>
-          {"Enable debug"}
-        </Text>
-        <Switch
-          size="sm"
-          isChecked={debug}
-          onChange={(e) => setDebug(e.target.checked)}
-        />
-      </Flex>
-
-      {debug && (
-        <Flex direction="column" mt={2} justifyContent="center">
-          <Text fontSize="xs">{debugInfo}</Text>
-          <Button my={2} maxW="80px" size="sm" onClick={() => setDebugInfo("")}>
-            Clear log
-          </Button>
-        </Flex>
-      )}
     </Flex>
   );
 };
